@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Sequência RGB</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body{ height:100%; width:100%; }
+  body{
+    overflow:hidden;
+    background:#ffffff;
+    transition: background-color 0.15s linear;
+    position:relative;
+    font-family: Arial, sans-serif;
+  }
+  #mainBtn{
+    position:absolute;
+    top:50%; left:50%;
+    transform:translate(-50%,-50%);
+    padding:20px 45px;
+    font-size:18px;
+    color:#fff;
+    background:#ff0000;
+    border:none;
+    border-radius:16px;
+    box-shadow:0 0 15px rgba(255,0,0,0.6);
+    cursor:pointer;
+    transition: background-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  #stopBtn{
+    position:absolute;
+    top:20px; right:20px;
+    padding:12px 22px;
+    font-size:14px;
+    color:#fff;
+    background:#ff0000;
+    border:none;
+    border-radius:10px;
+    cursor:pointer;
+    display:none;
+    box-shadow:0 0 12px rgba(255,0,0,0.6);
+  }
+  .square{
+    position:absolute;
+    width:34px;
+    height:34px;
+    border-radius:6px;
+    pointer-events:none;
+    will-change: transform;
+  }
+</style>
+</head>
+<body>
+  <button id="mainBtn">Iniciar</button>
+  <button id="stopBtn">Parar RGB</button>
+
+<script>
+(function(){
+  "use strict";
+
+  const COLORS = ["#ff0000","#ff7f00","#ffff00","#bfff00","#00ff00","#00ffbf",
+                   "#00ffff","#00bfff","#0000ff","#7f00ff","#ff00ff","#ff007f"];
+
+  const mainBtn = document.getElementById("mainBtn");
+  const stopBtn = document.getElementById("stopBtn");
+
+  let running = false;
+  let timeouts = [];
+  let intervals = [];
+  let squares = [];
+  let colorIndex = 0;
+  let blinkingActive = false;
+  const MAX_SQUARES = 1024;
+  const SPAWN_SIZE = 34;
+  const SPLIT_SPEED_THRESHOLD = 4;   // velocidade mínima pra multiplicar ao bater
+  const SPLIT_CHANCE = 0.85;         // chance de multiplicar quando rápido o suficiente
+
+  function addTimeout(fn, delay){ const id = setTimeout(fn, delay); timeouts.push(id); return id; }
+  function addInterval(fn, delay){ const id = setInterval(fn, delay); intervals.push(id); return id; }
+  function clearAllTimers(){
+    timeouts.forEach(clearTimeout);
+    intervals.forEach(clearInterval);
+    timeouts = []; intervals = [];
+  }
+  function randomColor(){ return COLORS[Math.floor(Math.random()*COLORS.length)]; }
+
+  // ---------- Movimento tipo DVD para botões ----------
+  function startBounceMovement(el, minSpeed, maxSpeed){
+    const rect = el.getBoundingClientRect();
+    el.style.right = "auto";
+    el.style.left = rect.left + "px";
+    el.style.top = rect.top + "px";
+    let x = rect.left, y = rect.top;
+    const sx = minSpeed + Math.random()*(maxSpeed-minSpeed);
+    const sy = minSpeed + Math.random()*(maxSpeed-minSpeed);
+    let vx = Math.random()<0.5 ? -sx : sx;
+    let vy = Math.random()<0.5 ? -sy : sy;
+    el._moving = true;
+    function frame(){
+      if (!el._moving) return;
+      const w = el.offsetWidth, h = el.offsetHeight;
+      const maxX = window.innerWidth - w, maxY = window.innerHeight - h;
+      x += vx; y += vy;
+      if (x<=0){ x=0; vx=Math.abs(vx); } else if (x>=maxX){ x=maxX; vx=-Math.abs(vx); }
+      if (y<=0){ y=0; vy=Math.abs(vy); } else if (y>=maxY){ y=maxY; vy=-Math.abs(vy); }
+      el.style.left = x+"px"; el.style.top = y+"px";
+      el._rafMove = requestAnimationFrame(frame);
+    }
+    el._rafMove = requestAnimationFrame(frame);
+  }
+  function stopBounceMovement(el){
+    el._moving = false;
+    if (el._rafMove) cancelAnimationFrame(el._rafMove);
+    el._rafMove = null;
+  }
+
+  // ---------- Sequência principal ----------
+  function startSequence(){
+    if (running) return;
+    running = true;
+    mainBtn.disabled = true;
+
+    addInterval(() => {
+      const c = COLORS[colorIndex % COLORS.length]; colorIndex++;
+      mainBtn.style.backgroundColor = c;
+      mainBtn.style.boxShadow = `0 0 25px 8px ${c}`;
+    }, 80);
+    startBounceMovement(mainBtn, 2, 4);
+
+    addTimeout(() => {
+      addInterval(() => { document.body.style.backgroundColor = randomColor(); }, 80);
+    }, 3000);
+
+    addTimeout(() => { spawnSquares(25); }, 5000);
+
+    addTimeout(() => {
+      blinkingActive = true;
+      squares.forEach(sq => startSquareBlink(sq));
+    }, 7000);
+
+    addTimeout(() => {
+      stopBtn.style.display = "block";
+      startStopButtonAnimation();
+      startBounceMovement(stopBtn, 2, 4);
+    }, 10000);
+  }
+
+  // ---------- Quadrados: criação ----------
+  function createSquare(baseX, baseY, color, speedBoost){
+    if (squares.length >= MAX_SQUARES) return null;
+    const sq = document.createElement("div");
+    sq.classList.add("square");
+    sq.style.left = baseX + "px";
+    sq.style.top = baseY + "px";
+    sq.style.backgroundColor = color;
+    sq.style.boxShadow = `0 0 15px 4px ${color}`;
+    document.body.appendChild(sq);
+    squares.push(sq);
+    animateSquareTransform(sq, baseX, baseY, speedBoost || 1);
+    if (blinkingActive) startSquareBlink(sq);
+    return sq;
+  }
+
+  function spawnSquares(qtd){
+    for (let i = 0; i < qtd; i++){
+      const baseX = Math.random() * (window.innerWidth - SPAWN_SIZE);
+      const baseY = Math.random() * (window.innerHeight - SPAWN_SIZE);
+      // velocidade inicial já alta o suficiente pra multiplicar rápido
+      createSquare(baseX, baseY, randomColor(), 2.5);
+    }
+  }
+
+  // ---------- Quadrados: movimento + rotação + escala + MULTIPLICAÇÃO ----------
+  function animateSquareTransform(sq, baseX, baseY, speedBoost){
+    let angle = Math.random() * 360;
+    let scaleDir = 1, scale = 1;
+    const rotSpeed = 0.3 + Math.random() * 0.3;
+    const scaleSpeed = 0.002 + Math.random() * 0.002;
+    const w = SPAWN_SIZE, h = SPAWN_SIZE;
+
+    let dx = 0, dy = 0;
+    const baseSpeed = (1.5 + Math.random() * 2) * (speedBoost || 1);
+    let vx = Math.random()<0.5 ? -baseSpeed : baseSpeed;
+    let vy = Math.random()<0.5 ? -baseSpeed : baseSpeed;
+
+    const minDX = -baseX, maxDX = window.innerWidth - w - baseX;
+    const minDY = -baseY, maxDY = window.innerHeight - h - baseY;
+
+    function trySplit(){
+      const speed = Math.max(Math.abs(vx), Math.abs(vy));
+      if (speed < SPLIT_SPEED_THRESHOLD) return;
+      if (squares.length >= MAX_SQUARES) return;
+      if (Math.random() > SPLIT_CHANCE) return;
+
+      const cloneX = Math.min(Math.max(baseX + dx, 0), window.innerWidth - w);
+      const cloneY = Math.min(Math.max(baseY + dy, 0), window.innerHeight - h);
+      createSquare(cloneX, cloneY, sq.style.backgroundColor, (speedBoost || 1) * 0.92);
+    }
+
+    function frame(){
+      if (!sq.isConnected) return;
+
+      angle += rotSpeed;
+      scale += scaleDir * scaleSpeed;
+      if (scale > 1.15) scaleDir = -1;
+      if (scale < 0.85) scaleDir = 1;
+
+      dx += vx; dy += vy;
+
+      if (dx <= minDX){ dx = minDX; vx = Math.abs(vx); trySplit(); }
+      else if (dx >= maxDX){ dx = maxDX; vx = -Math.abs(vx); trySplit(); }
+
+      if (dy <= minDY){ dy = minDY; vy = Math.abs(vy); trySplit(); }
+      else if (dy >= maxDY){ dy = maxDY; vy = -Math.abs(vy); trySplit(); }
+
+      sq.style.transform = `translate3d(${dx}px, ${dy}px, 0) rotate(${angle}deg) scale(${scale})`;
+      sq._rafId = requestAnimationFrame(frame);
+    }
+    sq._rafId = requestAnimationFrame(frame);
+  }
+
+  function startSquareBlink(sq){
+    let idx = Math.floor(Math.random() * COLORS.length);
+    const id = addInterval(() => {
+      idx = (idx + 1) % COLORS.length;
+      const c = COLORS[idx];
+      sq.style.backgroundColor = c;
+      sq.style.boxShadow = `0 0 15px 4px ${c}`;
+    }, 90);
+    sq._blinkInterval = id;
+  }
+
+  function startStopButtonAnimation(){
+    let idx = 0, angle = 0;
+    addInterval(() => {
+      const c = COLORS[idx % COLORS.length]; idx++;
+      stopBtn.style.backgroundColor = c;
+      stopBtn.style.boxShadow = `0 0 20px 6px ${c}`;
+    }, 90);
+    function frame(){
+      if (stopBtn.style.display === "none") return;
+      angle += 3;
+      stopBtn.style.transform = `rotate(${Math.sin(angle*Math.PI/180)*10}deg)`;
+      stopBtn._rafRotate = requestAnimationFrame(frame);
+    }
+    stopBtn._rafRotate = requestAnimationFrame(frame);
+  }
+
+  function stopEverything(){
+    clearAllTimers();
+    squares.forEach(sq => { if (sq._rafId) cancelAnimationFrame(sq._rafId); sq.remove(); });
+    squares = [];
+    document.body.style.backgroundColor = "#ffffff";
+    stopBounceMovement(mainBtn);
+    stopBounceMovement(stopBtn);
+    if (stopBtn._rafRotate) cancelAnimationFrame(stopBtn._rafRotate);
+    stopBtn._rafRotate = null;
+    mainBtn.style.left = "50%"; mainBtn.style.top = "50%"; mainBtn.style.right = "auto";
+    mainBtn.style.transform = "translate(-50%,-50%)";
+    mainBtn.style.backgroundColor = "#ff0000";
+    mainBtn.style.boxShadow = "0 0 15px rgba(255,0,0,0.6)";
+    mainBtn.disabled = false;
+    stopBtn.style.display = "none";
+    stopBtn.style.left = "auto"; stopBtn.style.top = "20px"; stopBtn.style.right = "20px";
+    stopBtn.style.transform = "none";
+    colorIndex = 0; running = false; blinkingActive = false;
+  }
+
+  mainBtn.addEventListener("click", startSequence);
+  stopBtn.addEventListener("click", stopEverything);
+})();
+</script>
+</body>
+</html>
